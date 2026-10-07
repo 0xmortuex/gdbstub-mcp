@@ -13,4 +13,5 @@ Real, finishable improvements - pick ONE, ship it end-to-end with tests.
 
 ## Quality
 - [ ] Integration test on aarch64 (`-M virt`) with a tiny fixture kernel.
+- [ ] Real mode: at reset QEMU reports eip=0xfff0 but the CPU fetches from CS.base+EIP (0xffff0); `next:`/disassembly read the wrong bytes. Read cs_base (or compute from cs) when CR0.PE=0.
 - [ ] Ack-mode stubs that interleave `O` (console output) packets - handle and surface them.
