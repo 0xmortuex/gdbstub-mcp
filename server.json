@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.0xmortuex/gdbstub-mcp",
+  "description": "Debug kernels through QEMU's gdbstub with no gdb binary - and explain triple faults.",
+  "repository": {
+    "url": "https://github.com/0xmortuex/gdbstub-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "gdbstub-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

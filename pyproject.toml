@@ -1,0 +1,46 @@
+[project]
+name = "gdbstub-mcp"
+version = "0.1.0"
+description = "MCP server that lets AI agents debug kernels through QEMU's gdbstub - no gdb binary needed. Breakpoints, registers, memory, backtraces, triple-fault diagnosis."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "0xmortuex" }]
+requires-python = ">=3.10"
+dependencies = ["mcp>=2.0.0", "pyelftools>=0.31", "capstone>=5.0"]
+keywords = ["mcp", "gdb", "gdbstub", "qemu", "osdev", "kernel", "debugger", "ai-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: System :: Emulators",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/0xmortuex/gdbstub-mcp"
+
+[project.scripts]
+gdbstub-mcp = "gdbstub_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gdbstub_mcp"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[[tool.mypy.overrides]]
+# capstone ships no type stubs or py.typed marker.
+module = ["capstone"]
+ignore_missing_imports = true
