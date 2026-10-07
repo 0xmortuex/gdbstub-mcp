@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import string
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from . import faults as faultmod
 from . import regs as regmod
@@ -28,6 +32,28 @@ mcp = MCPServer(
 
 _sessions: dict[str, Session] = {}
 
+F = TypeVar("F", bound=Callable[..., Any])
+
+# Failures an agent can act on. MCPServer only forwards a ToolError's message
+# to the client - anything else arrives as a bare "Error executing tool X" -
+# so these are re-raised as ToolError with their text intact. Anything not
+# listed here is a genuine bug and stays hidden from the client.
+_EXPECTED = (RSPError, KeyError, ValueError, FileNotFoundError, OSError)
+
+
+def tool(fn: F) -> F:
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except _EXPECTED as e:
+            # KeyError's str() wraps the message in quotes; use the raw text.
+            msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
+            raise ToolError(str(msg)) from e
+
+    mcp.tool()(wrapper)
+    return fn
+
 
 def _get(name: str) -> Session:
     s = _sessions.get(name)
@@ -41,7 +67,7 @@ def _note(note: str | None) -> str:
     return f"\n({note})" if note else ""
 
 
-@mcp.tool()
+@tool
 def debug_connect(
     name: str,
     port: int = 1234,
@@ -81,7 +107,7 @@ def debug_connect(
     return "\n".join(lines)
 
 
-@mcp.tool()
+@tool
 def debug_disconnect(name: str) -> str:
     """Detach from the stub (the guest keeps running) and forget the session."""
     s = _get(name)
@@ -93,7 +119,7 @@ def debug_disconnect(name: str) -> str:
     return f"Disconnected {name!r}."
 
 
-@mcp.tool()
+@tool
 def debug_sessions() -> str:
     """List active debug sessions."""
     if not _sessions:
@@ -106,7 +132,7 @@ def debug_sessions() -> str:
     return "\n".join(rows)
 
 
-@mcp.tool()
+@tool
 def debug_registers(name: str, registers: str | None = None, all: bool = False) -> str:
     """Read registers. Target must be halted.
 
@@ -145,7 +171,7 @@ def debug_registers(name: str, registers: str | None = None, all: bool = False) 
     return "\n".join(lines)
 
 
-@mcp.tool()
+@tool
 def debug_set_register(name: str, register: str, value: str) -> str:
     """Write a register. value is an address expression (0x10, symbol, ...)."""
     s = _get(name)
@@ -154,7 +180,7 @@ def debug_set_register(name: str, register: str, value: str) -> str:
     return f"{s.layout.by_name(register).name} = {v:#x}{_note(note)}"
 
 
-@mcp.tool()
+@tool
 def debug_memory(name: str, address: str, length: int = 64, format: str = "hex") -> str:
     """Read guest memory (virtual addresses, as the CPU currently sees them).
 
@@ -193,7 +219,7 @@ def debug_memory(name: str, address: str, length: int = 64, format: str = "hex")
     return "\n".join(lines) + _note(note)
 
 
-@mcp.tool()
+@tool
 def debug_write_memory(name: str, address: str, hex_bytes: str) -> str:
     """Write raw bytes (hex string, e.g. "90 90 cc") to guest memory."""
     s = _get(name)
@@ -203,7 +229,7 @@ def debug_write_memory(name: str, address: str, hex_bytes: str) -> str:
     return f"Wrote {len(data)} bytes at {s.where(addr)}{_note(note)}"
 
 
-@mcp.tool()
+@tool
 def debug_break(name: str, location: str, kind: str = "sw", length: int | None = None) -> str:
     """Set a breakpoint or watchpoint.
 
@@ -218,7 +244,7 @@ def debug_break(name: str, location: str, kind: str = "sw", length: int | None =
     return f"#{bp.id} {kind} {what} at {s.where(bp.address)}{_note(note)}"
 
 
-@mcp.tool()
+@tool
 def debug_delete(name: str, id: int) -> str:
     """Remove a breakpoint/watchpoint by its # id."""
     s = _get(name)
@@ -226,7 +252,7 @@ def debug_delete(name: str, id: int) -> str:
     return f"Removed #{bp.id} ({bp.label})."
 
 
-@mcp.tool()
+@tool
 def debug_breakpoints(name: str) -> str:
     """List breakpoints and watchpoints."""
     s = _get(name)
@@ -236,7 +262,7 @@ def debug_breakpoints(name: str) -> str:
                      for b in s.breakpoints.values())
 
 
-@mcp.tool()
+@tool
 def debug_continue(name: str, timeout_s: float = 10.0) -> str:
     """Resume the target and wait up to timeout_s for it to stop.
 
@@ -252,7 +278,7 @@ def debug_continue(name: str, timeout_s: float = 10.0) -> str:
     return s.describe_stop(reply)
 
 
-@mcp.tool()
+@tool
 def debug_wait(name: str, timeout_s: float = 10.0) -> str:
     """Wait for a running target to stop (after debug_continue timed out)."""
     s = _get(name)
@@ -262,14 +288,14 @@ def debug_wait(name: str, timeout_s: float = 10.0) -> str:
     return s.describe_stop(reply)
 
 
-@mcp.tool()
+@tool
 def debug_interrupt(name: str) -> str:
     """Halt a running target immediately (like Ctrl-C in gdb)."""
     s = _get(name)
     return s.describe_stop(s.rsp.interrupt())
 
 
-@mcp.tool()
+@tool
 def debug_step(name: str, count: int = 1) -> str:
     """Single-step `count` machine instructions (1..1000) and show where it stopped."""
     if not 1 <= count <= 1000:
@@ -287,7 +313,7 @@ def debug_step(name: str, count: int = 1) -> str:
     return s.describe_stop(reply)
 
 
-@mcp.tool()
+@tool
 def debug_backtrace(name: str, max_frames: int = 16, mode: str = "auto") -> str:
     """Show the call stack.
 
@@ -302,7 +328,7 @@ def debug_backtrace(name: str, max_frames: int = 16, mode: str = "auto") -> str:
     return "\n".join(frames) + f"\n(method: {method})"
 
 
-@mcp.tool()
+@tool
 def debug_disassemble(name: str, address: str | None = None, count: int = 12,
                       bits: int | None = None) -> str:
     """Disassemble `count` instructions from address (default: current pc).
@@ -322,7 +348,7 @@ def debug_disassemble(name: str, address: str | None = None, count: int = 12,
     return f"{src}\n" + "\n".join(lines) + _note(note)
 
 
-@mcp.tool()
+@tool
 def debug_symbol(query: str, name: str | None = None, elf: str | None = None) -> str:
     """Look up symbols without touching the target.
 
@@ -349,7 +375,7 @@ def debug_symbol(query: str, name: str | None = None, elf: str | None = None) ->
     return "\n".join(out) + _note(note)
 
 
-@mcp.tool()
+@tool
 def debug_explain_fault(log_path: str, elf: str | None = None, max_events: int = 12) -> str:
     """Explain a crash / triple fault from a QEMU interrupt log.
 
