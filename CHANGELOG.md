@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- `debug_continue` from a breakpoint re-reported the same breakpoint forever (QEMU does
+  this for software and hardware breakpoints): it now steps over the breakpoint at pc
+  first, like gdb. Found by pagetable-mcp; the integration tests broke on a function hit
+  every loop iteration, which hid it.
+- Disassembly picked its mode from the emulator (`qemu-system-x86_64` -> 64-bit) instead of
+  the CPU: 32-bit code showed as `push rbp`. The mode now comes from CR0.PE / EFER.LMA.
 - `debug_disconnect` left the guest paused: QEMU rejects a bare `D` with E22 once the
   multiprocess extension is negotiated. Detach now sends `D;1`, checks the reply, halts a
   running target first, and handles an already-exited target.

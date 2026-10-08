@@ -278,6 +278,9 @@ def debug_continue(name: str, timeout_s: float = 10.0) -> str:
     waiting, or debug_interrupt to halt it where it is.
     """
     s = _get(name)
+    stepped = s.step_over_breakpoint()
+    if stepped is not None and not stepped.startswith((b"T05", b"S05")):
+        return s.describe_stop(stepped)  # the step itself faulted or exited
     s.rsp.resume()
     reply = s.rsp.wait_stop(timeout_s)
     if reply is None:
@@ -311,8 +314,10 @@ def debug_step(name: str, count: int = 1) -> str:
     s = _get(name)
     reply = b""
     for _ in range(count):
-        s.rsp.resume(step=True)
-        r = s.rsp.wait_stop(s.rsp.read_timeout)
+        r = s.step_over_breakpoint()
+        if r is None:
+            s.rsp.resume(step=True)
+            r = s.rsp.wait_stop(s.rsp.read_timeout)
         if r is None:
             raise RSPError("target did not stop after a single step")
         reply = r

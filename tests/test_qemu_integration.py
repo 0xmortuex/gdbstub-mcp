@@ -169,3 +169,51 @@ def test_reverse_resume_refused_outside_replay(vm):
     with pytest.raises(Exception, match="ReverseContinue"):
         S._sessions["t"].rsp.resume(reverse=True)
     S.debug_disconnect("t")
+
+
+@pytest.mark.parametrize("kind", ["sw", "hw"])
+def test_continue_steps_over_the_breakpoint_at_pc(vm, kind):
+    """Resuming from an address with an active breakpoint re-reported the
+    same breakpoint forever. kmain runs once, so a second stop there would
+    mean continue never left it."""
+    port, _, _ = vm
+    S.debug_connect("t", port=port, elf=ELF)
+    S.debug_break("t", "kmain", kind=kind)
+    assert "breakpoint #1 (kmain)" in S.debug_continue("t", 20)
+    assert "Still running" in S.debug_continue("t", 1.0)
+    S.debug_interrupt("t")
+    S.debug_disconnect("t")
+
+
+def test_step_from_a_breakpoint_advances(vm):
+    port, _, _ = vm
+    S.debug_connect("t", port=port, elf=ELF)
+    S.debug_break("t", "kmain")
+    S.debug_continue("t", 20)
+    assert "<kmain+0x1>" in S.debug_step("t")
+    S.debug_disconnect("t")
+
+
+QEMU64 = (shutil.which("qemu-system-x86_64")
+          or (r"C:\Program Files\qemu\qemu-system-x86_64.exe"
+              if os.path.isfile(r"C:\Program Files\qemu\qemu-system-x86_64.exe") else None))
+
+
+@pytest.mark.skipif(QEMU64 is None, reason="qemu-system-x86_64 not installed")
+def test_disassembly_follows_the_cpu_mode_not_the_emulator():
+    """The 32-bit fixture kernel on qemu-system-x86_64: the stub describes
+    64-bit registers, but the CPU runs protected-mode code."""
+    port = _free_port()
+    proc = subprocess.Popen(
+        [QEMU64, "-display", "none", "-kernel", ELF, "-gdb", f"tcp:127.0.0.1:{port}", "-S"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        S.debug_connect("t64", port=port, elf=ELF)
+        S.debug_break("t64", "add")
+        assert "next: push ebp" in S.debug_continue("t64", 20)
+        assert "push ebp" in S.debug_disassemble("t64", "add", count=1)
+        S.debug_disconnect("t64")
+    finally:
+        S._sessions.pop("t64", None)
+        proc.kill()
+        proc.wait()

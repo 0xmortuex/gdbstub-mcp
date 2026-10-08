@@ -126,6 +126,8 @@ class Session:
     def _capstone(self, mode_override: int | None = None) -> capstone.Cs:
         arch = (self.layout.architecture or (self.syms.arch if self.syms else "")).lower()
         bits = mode_override
+        if bits is None and ("x86" in arch or "i386" in arch):
+            bits = self._x86_cpu_bits()
         if "x86-64" in arch or "x86_64" in arch or arch == "x64":
             cs = capstone.Cs(capstone.CS_ARCH_X86, {16: capstone.CS_MODE_16, 32: capstone.CS_MODE_32}.get(bits or 64, capstone.CS_MODE_64))
         elif "i386" in arch or arch == "x86":
@@ -140,6 +142,21 @@ class Session:
         else:
             raise RSPError(f"disassembly not supported for architecture {arch!r}")
         return cs
+
+    def _x86_cpu_bits(self) -> int | None:
+        """Decode width from the CPU's mode, not the emulator binary: a 32-bit
+        kernel on qemu-system-x86_64 runs protected-mode code, and the BIOS
+        runs real-mode code on both. CR0.PE=0 -> 16; EFER.LMA=1 -> 64
+        (assumes a 64-bit code segment once in long mode); else 32. None if
+        the stub doesn't expose CR0."""
+        names = {r.name for r in self.layout.registers}
+        if "cr0" not in names:
+            return None
+        if not self.read_reg("cr0") & 1:
+            return 16
+        if "efer" in names and self.read_reg("efer") & (1 << 10):
+            return 64
+        return 32
 
     def disassemble(self, address: int, count: int, bits: int | None = None) -> list[str]:
         data = self.rsp.read_memory(address, count * 16)
@@ -199,6 +216,33 @@ class Session:
         self.breakpoints[bp.id] = bp
         self._next_bp += 1
         return bp, note
+
+    def step_over_breakpoint(self) -> bytes | None:
+        """If the pc sits on one of our breakpoints, step past it.
+
+        Resuming from an address with an active breakpoint reports the same
+        breakpoint again without executing anything (QEMU does this for both
+        software and hardware breakpoints), so `continue` would never leave
+        it. Like gdb: lift the breakpoint(s) at pc, single-step, re-insert.
+        Returns the step's stop reply, or None when no breakpoint is at pc.
+        """
+        pc = self.read_reg(self.layout.pc().name)
+        here = [b for b in self.breakpoints.values()
+                if b.address == pc and b.kind in ("sw", "hw")]
+        if not here:
+            return None
+        for bp in here:
+            self.rsp.clear_breakpoint(BP_KINDS[bp.kind], bp.address, bp.length)
+        try:
+            self.rsp.resume(step=True)
+            reply = self.rsp.wait_stop(self.rsp.read_timeout)
+        finally:
+            if not self.rsp.running:
+                for bp in here:
+                    self.rsp.set_breakpoint(BP_KINDS[bp.kind], bp.address, bp.length)
+        if reply is None:
+            raise RSPError("target did not stop after stepping over the breakpoint at pc")
+        return reply
 
     def remove_breakpoint(self, bp_id: int) -> Breakpoint:
         bp = self.breakpoints.get(bp_id)
