@@ -244,11 +244,20 @@ class RSPClient:
 
     # -- execution control -------------------------------------------------
 
-    def resume(self, step: bool = False) -> None:
+    def resume(self, step: bool = False, reverse: bool = False) -> None:
+        """Start the target: c (continue), s (step), or - in a stub that
+        advertises ReverseContinue/ReverseStep, e.g. QEMU replay mode - bc/bs.
+        Pair with wait_stop() or interrupt()."""
+        if reverse:
+            feature = "ReverseStep" if step else "ReverseContinue"
+            if self.features.get(feature) != "+":
+                raise RSPError(f"this stub does not support {feature} - in QEMU it needs "
+                               f"record/replay mode (-icount ...,rr=replay) with a snapshot")
+        packet = (b"b" if reverse else b"") + (b"s" if step else b"c")
         with self._lock:
             if self.running:
                 raise RSPError("target is already running")
-            self._send_packet(b"s" if step else b"c")
+            self._send_packet(packet)
             self.running = True
 
     def wait_stop(self, timeout: float) -> bytes | None:
@@ -275,15 +284,21 @@ class RSPClient:
             self.running = False
             return reply
 
+    def detach(self) -> None:
+        """Detach so the stub resumes the guest. Target must be halted.
+
+        With the multiprocess extension negotiated (QEMU always offers it),
+        a bare `D` is rejected with E22 and the guest stays paused; the
+        detach must name the process: `D;<pid>`. QEMU's guest is pid 1.
+        """
+        packet = "D;1" if self.features.get("multiprocess") == "+" else "D"
+        reply = self.request(packet)
+        if reply != b"OK":
+            raise RSPError(f"detach ({packet}) failed: {reply!r} - the guest may still be paused")
+
     def close(self) -> None:
+        """Close the socket. Call detach() first to leave the guest running."""
         if self.sock is not None:
-            try:
-                if not self.running:
-                    # Detach so QEMU lets the guest keep running; best-effort.
-                    self.sock.settimeout(1.0)
-                    self.sock.sendall(frame(b"D"))
-            except OSError:
-                pass
             try:
                 self.sock.close()
             except OSError:

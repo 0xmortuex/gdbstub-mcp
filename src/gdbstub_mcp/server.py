@@ -109,14 +109,22 @@ def debug_connect(
 
 @tool
 def debug_disconnect(name: str) -> str:
-    """Detach from the stub (the guest keeps running) and forget the session."""
+    """Remove breakpoints, detach from the stub so the guest keeps running,
+    and forget the session. A running target is halted first."""
     s = _get(name)
+    if s.last_stop[:1] in (b"W", b"X"):
+        # The VM already exited; there is nothing left to detach from.
+        s.close()
+        del _sessions[name]
+        return f"Disconnected {name!r} (the target had already exited)."
+    if s.rsp.running:
+        s.describe_stop(s.rsp.interrupt())
     for bp_id in list(s.breakpoints):
-        if not s.rsp.running:
-            s.remove_breakpoint(bp_id)
+        s.remove_breakpoint(bp_id)
+    s.rsp.detach()
     s.close()
     del _sessions[name]
-    return f"Disconnected {name!r}."
+    return f"Disconnected {name!r}; the guest is running."
 
 
 @tool

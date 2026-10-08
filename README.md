@@ -31,7 +31,7 @@ next: mov eax, dword ptr [ebp + 8]
 #0  0x100029 <add+0x9> at kernel.c:10
 #1  0x100071 <compute+0x31> at kernel.c:16
 #2  0x1000b2 <kmain+0x12> at kernel.c:28
-#3  0x100016 <_start+0xa> at boot.s:22
+#3  0x100016 <_start+0xa> at boot.s:21
 
 > debug_registers eip,eflags,cr0
      eip = 0x00100029  <add+0x9> at kernel.c:10

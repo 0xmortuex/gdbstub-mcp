@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `debug_disconnect` left the guest paused: QEMU rejects a bare `D` with E22 once the
+  multiprocess extension is negotiated. Detach now sends `D;1`, checks the reply, halts a
+  running target first, and handles an already-exited target.
+- Backtrace caller frames showed the line *after* the call: they are now symbolized at
+  `return_address - 1`, as gdb does (`_start` is `boot.s:21`, not the `hlt` on 22).
+- Tool errors reach the agent as `ToolError` (mcp 2 hides other exceptions).
+
+### Added
+- `RSPClient.resume(reverse=True)` sends `bc`/`bs` when the stub advertises
+  ReverseContinue/ReverseStep (QEMU replay mode), with a clear error otherwise.
+- `py.typed` marker, so dependents type-check against gdbstub-mcp.
+
 ## 0.1.0 - 2026-10-07
 
 First release.

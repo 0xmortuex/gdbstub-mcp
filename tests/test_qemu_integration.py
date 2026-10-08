@@ -116,3 +116,56 @@ def test_triple_fault_end_to_end(vm):
     assert "TRIPLE FAULT" in text
     assert "#UD invalid opcode at" in text and "triple_fault" in text
     assert "Root cause: the chain started with #UD" in text
+
+
+def test_disconnect_leaves_the_guest_running(vm):
+    """A bare `D` is rejected by QEMU once multiprocess is negotiated, which
+    used to leave the guest silently paused after debug_disconnect."""
+    port, _, _ = vm
+
+    def read_counter():
+        S.debug_connect("t", port=port, elf=ELF)
+        out = S.debug_memory("t", "counter", 4, "words")
+        S.debug_disconnect("t")
+        return int(out.split(":")[1].split()[0], 16)
+
+    S.debug_connect("t", port=port, elf=ELF)
+    S.debug_break("t", "kmain")
+    S.debug_continue("t", 20)
+    assert "the guest is running" in S.debug_disconnect("t")  # also removes bp #1
+    first = read_counter()
+    time.sleep(0.5)
+    second = read_counter()
+    assert second != first, "counter did not change: the guest stayed paused after detach"
+
+
+def test_disconnect_while_running_halts_then_detaches(vm):
+    port, _, _ = vm
+    S.debug_connect("t", port=port, elf=ELF)
+    assert "Still running" in S.debug_continue("t", 0.3)
+    assert "the guest is running" in S.debug_disconnect("t")
+
+
+def test_caller_frames_show_the_calling_line(vm):
+    """Caller frames are symbolized at return address - 1: the call itself.
+    kmain calls compute on kernel.c:28; the instruction after that call
+    belongs to the next statement, so naive lookup would misreport it."""
+    port, _, _ = vm
+    S.debug_connect("t", port=port, elf=ELF)
+    S.debug_break("t", "add")
+    S.debug_continue("t", 20)
+    bt = S.debug_backtrace("t", mode="fp").splitlines()
+    kmain_frame = next(ln for ln in bt if "<kmain+" in ln)
+    assert "kernel.c:28" in kmain_frame, bt
+    # boot.s: `call kmain` is line 21; the return address is the `hlt` on 22.
+    start_frame = next(ln for ln in bt if "<_start+" in ln)
+    assert "boot.s:21" in start_frame, bt
+    S.debug_disconnect("t")
+
+
+def test_reverse_resume_refused_outside_replay(vm):
+    port, _, _ = vm
+    S.debug_connect("t", port=port, elf=ELF)
+    with pytest.raises(Exception, match="ReverseContinue"):
+        S._sessions["t"].rsp.resume(reverse=True)
+    S.debug_disconnect("t")

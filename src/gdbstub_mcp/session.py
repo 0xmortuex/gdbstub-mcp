@@ -96,12 +96,27 @@ class Session:
                 return base, f"{reg.name} = {base:#x}" if rest else None
         return resolve(e, self.syms)
 
-    def where(self, address: int) -> str:
+    def where(self, address: int, return_address: bool = False) -> str:
+        """`address <sym+off> at file:line`.
+
+        return_address=True is for caller frames in a backtrace: a return
+        address points at the instruction AFTER the call, which can belong to
+        the next source line (or even the next function, if the call was the
+        last instruction). Symbol and line are looked up at address - 1, the
+        last byte of the call itself, as gdb does.
+        """
         if self.syms is None:
             return f"{address:#x}"
-        sym = self.syms.symbolize(address)
+        lookup = address - 1 if return_address else address
+        sym = self.syms.symbolize(lookup)
+        if return_address and not sym.startswith("0x"):
+            # Show the offset of the return address itself, not of address - 1.
+            fn = self.syms.containing_function(lookup)
+            if fn is not None:
+                off = address - fn.address
+                sym = fn.name if off == 0 else f"{fn.name}+{off:#x}"
         text = f"{address:#x}" if sym.startswith("0x") else f"{address:#x} <{sym}>"
-        line = self.syms.line_for(address)
+        line = self.syms.line_for(lookup)
         if line is not None:
             text += f" at {os.path.basename(line.file)}:{line.line}"
         return text
@@ -225,7 +240,7 @@ class Session:
             frames = [pc] + self._stack_scan(max_frames - 1)
             method = ("stack scan (heuristic: any stack word pointing just after a call "
                       "instruction inside a known function - may include stale frames)")
-        return [f"#{i}  {self.where(a)}" for i, a in enumerate(frames)], method
+        return [f"#{i}  {self.where(a, return_address=i > 0)}" for i, a in enumerate(frames)], method
 
     def _x86_unframed_return(self, pc: int) -> int | None:
         """Return address for an x86 pc whose frame isn't set up (or is torn down).
